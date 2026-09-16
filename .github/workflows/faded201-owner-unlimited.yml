@@ -1,0 +1,73 @@
+name: Faded201 — Owner Unlimited Credits
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codex-owner-unlimited:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out EMBZ NEXUS
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run official OpenAI Codex
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          prompt: |
+            Modify this EMBZ NEXUS repository so only the verified application owner
+            has unlimited agent usage.
+
+            Requirements:
+            - Preserve all Basic, Pro, Executive, Stripe billing, top-up, expiry,
+              workspace-member, and customer credit behavior exactly as it is.
+            - Do not grant unlimited usage from editable profile metadata or client-side state.
+              Use the server-confirmed account role === 'owner'.
+            - Owner agent runs must not deduct allowance_units or topup_units.
+            - Owner agent runs must not fail because of insufficient credits or the task credit cap.
+            - Keep the existing six-provider-turn safety limit and all authentication/authorization checks.
+            - Prefer a production-safe server application change that does not require a database migration if possible.
+            - For owner run creation, use trusted server/service-role database access and preserve project authorization checks.
+            - For owner run completion/failure/cancellation, settle owner runs without credit-refund logic mutating balances.
+              Owner runs should record charged_units = 0.
+            - Non-owner runs must continue through the existing reserve_run / finish_run credit accounting unchanged.
+            - Update the UI so the owner sees "Unlimited" instead of a numeric credit balance
+              and does not need to manage a task credit cap.
+            - Add or update tests proving owner usage is unlimited while non-owner credit enforcement remains intact.
+            - Run the existing tests/build/type checks available in the repository.
+            - Do not expose or print secrets.
+
+            Inspect at least:
+            - app/api/runs/route.ts
+            - app/api/runs/[id]/route.ts
+            - lib/agents.ts
+            - components/workspace.tsx
+            - supabase/schema.sql
+            - tests/database.test.ts
+            - tests/core.test.ts
+
+            Make the changes directly in the checked-out workspace.
+            Keep the patch focused and production-safe.
+
+      - name: Save Codex patch
+        shell: bash
+        run: |
+          git diff --binary > owner-unlimited.patch
+          if [ ! -s owner-unlimited.patch ]; then
+            echo "Codex produced no file changes."
+          fi
+
+      - name: Upload patch for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: faded201-owner-unlimited-patch
+          path: owner-unlimited.patch
+          if-no-files-found: warn
