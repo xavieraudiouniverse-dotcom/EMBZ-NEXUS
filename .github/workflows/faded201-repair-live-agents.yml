@@ -1,1 +1,97 @@
 
+name: Faded201 — Repair Live Agents
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair-live-agents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out EMBZ NEXUS
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run official OpenAI Codex repair
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          prompt: |
+            Fix the live agent experience in EMBZ NEXUS. Make production-safe code changes, not just an audit.
+
+            The same repair must work for GPT, Claude, and the custom Vercel agent because they share lib/agents.ts.
+
+            Required fixes:
+
+            1. Live incremental progress
+               - Today executeRun accumulates output, trace and proposals in memory and only persists them in finish_run.
+               - Add a small server-side progress persistence helper in lib/agents.ts that updates the current runs row while status is running.
+               - Persist output, trace and proposals during execution after meaningful progress: provider text, tool completion/proposal, and each provider turn.
+               - Do not alter credit settlement, final status semantics, cancellation authorization, provider billing calculations, the six-provider-turn safety limit, or project authorization.
+               - Do not expose secrets or provider payloads containing secrets.
+
+            2. Stale task details modal
+               - components/workspace.tsx currently stores activeRun as a snapshot. The modal status looks up the current run but output, trace and proposals still come from the stale activeRun object.
+               - Bind the open task details view to the latest matching run in state.runs on every refresh, falling back to the original snapshot only if necessary.
+               - While the selected task is queued/running, keep polling automatically so output, trace, proposals and status update without closing/reopening the panel.
+               - Use a responsive polling interval around 1.5–2 seconds while a task details panel is open/running.
+               - Avoid duplicate overlapping refresh requests.
+               - Change the queued/running empty-state copy so it says progress will appear automatically rather than instructing the user to close and refresh.
+
+            3. UX correctness
+               - Keep Stop task working.
+               - Apply reviewed changes must always use the latest run proposals/base_version.
+               - Do not falsely claim builds/tests/deployments happen inside the EMBZ app agents; keep the current capability boundaries.
+               - Preserve Basic/Pro/Executive behavior and all current API auth/security checks.
+
+            4. Tests
+               - Add or update focused tests where practical for progress persistence/stale-run behavior without weakening existing tests.
+               - Do not make broad unrelated refactors.
+
+            Inspect at minimum:
+            - lib/agents.ts
+            - components/workspace.tsx
+            - app/api/runs/[id]/route.ts
+            - app/api/state/route.ts
+            - lib/types.ts
+            - tests/*.test.ts
+
+            Make the edits directly in the checked-out workspace.
+            Finish with a concise summary of changed files.
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit validated repair
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Codex produced no source changes."
+            exit 1
+          fi
+
+          git config user.name "Faded201 Codex"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix live agent progress and task refresh"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:main
