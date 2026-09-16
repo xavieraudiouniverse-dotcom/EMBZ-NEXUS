@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chargeUnits,price,validateFiles,previewHTML} from '../lib/plans';
+import {addMonths} from '../lib/billing';
+import {staticAudit} from '../lib/agents';
+test('AUD prices change for every purchasable term and preserve agreed totals',()=>{assert.equal(price('pro','month'),4300);assert.equal(price('pro','six'),24510);assert.equal(price('pro','year'),46440);assert.equal(price('pro','three'),131580);assert.equal(price('pro','ten'),412800);assert.equal(price('executive','month'),9999);assert.equal(price('executive','ten'),959904);assert.equal(price('basic','ten'),0)});
+test('fractional credits bill at one tenth of a credit, without floating-point overcharge',()=>{assert.equal(chargeUnits(.002),1);assert.equal(chargeUnits(.02),10);assert.equal(chargeUnits(.02001),11);assert.throws(()=>chargeUnits(-1));assert.throws(()=>chargeUnits(NaN));});
+test('source validation rejects traversal, secrets paths and oversized payloads',()=>{for(const path of ['../secret','/absolute','a/../../x','a\\b','.env.local','a/.env'])assert.throws(()=>validateFiles({[path]:'x'}));assert.throws(()=>validateFiles({'index.html':'x'.repeat(500001)}));assert.deepEqual(validateFiles({'src/app.ts':'ok'}),{'src/app.ts':'ok'});});
+test('preview blocks network and injects inline local files safely',()=>{const html=previewHTML({'index.html':'<link href="styles.css" rel="stylesheet"><script src="app.js"></script>','styles.css':'body{color:red}','app.js':'console.log("ok")'});assert.match(html,/connect-src 'none'/);assert.match(html,/body\{color:red\}/);assert.match(html,/console.log/);assert.ok(html.startsWith('<meta'));});
+test('calendar terms clamp leap days without overflowing into March',()=>{assert.equal(addMonths(new Date('2024-02-29T12:00:00Z'),120).toISOString(),'2034-02-28T12:00:00.000Z');assert.equal(addMonths(new Date('2026-01-31T12:00:00Z'),1).toISOString(),'2026-02-28T12:00:00.000Z');});
+test('limited static audit reports concrete file findings',()=>{const findings=staticAudit({'index.html':'<html><img src="a.png"><body>Hello</body></html>'});assert.ok(findings.some(x=>x.includes('missing page title')));assert.ok(findings.some(x=>x.includes('alt text')));});

@@ -1,0 +1,3 @@
+import {owner,body,route,db,check,ApiError,audit} from '@/lib/server';
+import {processStripeEvent} from '@/lib/billing';
+export const POST=route(async req=>{const a=await owner(req),b=await body(req),event=check(await db().from('webhook_events').select('*').eq('id',b.id).single());if(event.provider!=='stripe'||event.status!=='failed')throw new ApiError('Only failed verified Stripe events can be replayed here.');await processStripeEvent(event.payload);check(await db().from('webhook_events').update({status:'processed',error:null,processed_at:new Date().toISOString()}).eq('id',event.id));await audit(a.id,'webhook.replay',{id:event.id});return {ok:true};});

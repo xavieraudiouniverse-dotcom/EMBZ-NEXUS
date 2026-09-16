@@ -1,0 +1,3 @@
+import {account,body,route,rpc,ApiError,workspace} from '@/lib/server';
+import {agentReady} from '@/lib/agents';
+export const POST=route(async req=>{const a=await account(req),w=await workspace(a),b=await body(req);if(!['gpt','claude','vercel'].includes(b.agent)||typeof b.prompt!=='string'||!b.prompt.trim()||b.prompt.length>8000||!Number.isInteger(b.units)||!/^[-a-f0-9]{36}$/.test(b.id))throw new ApiError('Choose a project, agent, task and valid credit cap.');if(b.agent==='vercel'&&w.tier==='basic')throw new ApiError('Vercel operations require Pro.',403);agentReady(b.agent);return rpc('reserve_run',{p_user:a.id,p_id:b.id,p_project:b.projectId,p_agent:b.agent,p_prompt:b.prompt,p_units:b.units});});

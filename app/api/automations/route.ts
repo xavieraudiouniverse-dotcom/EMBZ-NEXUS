@@ -1,0 +1,5 @@
+import {account,workspace,body,route,rpc,db,check,ApiError} from '@/lib/server';
+import {agentReady} from '@/lib/agents';
+export const GET=route(async req=>{const a=await account(req),w=await workspace(a);return check(await db().from('automations').select('*').eq('owner_id',w.id).order('created_at',{ascending:false}));});
+export const POST=route(async req=>{const a=await account(req),b=await body(req);if(!['daily','weekly'].includes(b.cadence)||!['gpt','claude','vercel'].includes(b.agent)||typeof b.name!=='string'||!b.name.trim()||typeof b.prompt!=='string'||!b.prompt.trim()||b.prompt.length>8000||!Number.isInteger(b.units))throw new ApiError('Enter a name, task, schedule and credit cap.');agentReady(b.agent);return rpc('create_automation',{p_user:a.id,p_project:b.projectId,p_name:b.name.slice(0,80),p_agent:b.agent,p_prompt:b.prompt,p_units:b.units,p_cadence:b.cadence});});
+export const DELETE=route(async req=>{const a=await account(req),b=await body(req);check(await db().from('automations').delete().eq('id',b.id).eq('owner_id',a.id));return {ok:true};});
