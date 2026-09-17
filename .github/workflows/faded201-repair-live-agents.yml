@@ -1,5 +1,4 @@
-
-name: Faded201 — Repair Live Agents
+name: Faded201 — Repair Live Agents v2
 
 on:
   workflow_dispatch:
@@ -10,7 +9,7 @@ permissions:
 jobs:
   repair-live-agents:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out EMBZ NEXUS
@@ -19,7 +18,7 @@ jobs:
           persist-credentials: false
 
       - name: Run official OpenAI Codex repair
-        id: codex
+        id: codex_repair
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -34,27 +33,32 @@ jobs:
             1. Live incremental progress
                - Today executeRun accumulates output, trace and proposals in memory and only persists them in finish_run.
                - Add a small server-side progress persistence helper in lib/agents.ts that updates the current runs row while status is running.
-               - Persist output, trace and proposals during execution after meaningful progress: provider text, tool completion/proposal, and each provider turn.
+               - Persist output, trace and proposals during execution after meaningful progress: provider text, tool completion/proposal, tool failure, and each provider turn.
+               - Progress writes are best effort and must be guarded so a temporary progress-write failure never changes settlement or final status.
+               - Persist only safe operational information. Redact configured provider/database secrets from persisted output, proposals and trace.
+               - For deployment_status, persist only a minimal safe summary such as deployment id/state/created time rather than raw provider payloads.
                - Do not alter credit settlement, final status semantics, cancellation authorization, provider billing calculations, the six-provider-turn safety limit, or project authorization.
-               - Do not expose secrets or provider payloads containing secrets.
 
             2. Stale task details modal
                - components/workspace.tsx currently stores activeRun as a snapshot. The modal status looks up the current run but output, trace and proposals still come from the stale activeRun object.
                - Bind the open task details view to the latest matching run in state.runs on every refresh, falling back to the original snapshot only if necessary.
                - While the selected task is queued/running, keep polling automatically so output, trace, proposals and status update without closing/reopening the panel.
-               - Use a responsive polling interval around 1.5–2 seconds while a task details panel is open/running.
-               - Avoid duplicate overlapping refresh requests.
+               - Use a responsive polling interval around 1.5 seconds while a running task details panel is open; keep the existing slower background polling when no selected task is running.
+               - Avoid duplicate overlapping refresh requests with a shared single-flight refresh helper.
                - Change the queued/running empty-state copy so it says progress will appear automatically rather than instructing the user to close and refresh.
 
             3. UX correctness
                - Keep Stop task working.
-               - Apply reviewed changes must always use the latest run proposals/base_version.
-               - Do not falsely claim builds/tests/deployments happen inside the EMBZ app agents; keep the current capability boundaries.
+               - Apply reviewed changes must always refresh first and use the latest run proposals/base_version.
+               - Refuse Apply while the task is queued/running and refuse stale/missing proposals safely.
+               - Do not falsely claim builds/tests/deployments happen inside the EMBZ app agents; keep the current capability boundaries. The custom Vercel agent has read-only deployment status here.
                - Preserve Basic/Pro/Executive behavior and all current API auth/security checks.
 
             4. Tests
-               - Add or update focused tests where practical for progress persistence/stale-run behavior without weakening existing tests.
-               - Do not make broad unrelated refactors.
+               - Add focused regression tests for progress persistence and latest-run/single-flight behavior without weakening existing tests.
+               - IMPORTANT: lib/types.ts defines complete Run and State types. Do not cast partial object literals directly with `as Run` or `as State`, and do not hide fixture errors behind `as unknown as ...`. Build complete typed Run/State fixtures (or typed fixture helpers) containing every required property.
+               - The previous repair failed final TypeScript validation only because tests/run-state.test.ts used incomplete direct casts to Run/State. Do not repeat that failure.
+               - Do not weaken tsconfig, skip typechecking, remove existing tests, or make broad unrelated refactors.
 
             Inspect at minimum:
             - lib/agents.ts
@@ -70,7 +74,39 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
+      - name: Initial typecheck
+        id: initial_typecheck
+        continue-on-error: true
+        run: npm run typecheck
+
+      - name: Repair any TypeScript validation failures
+        if: ${{ steps.initial_typecheck.outcome == 'failure' }}
+        id: codex_typefix
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          prompt: |
+            A live-agent repair has already been made in this checked-out EMBZ NEXUS workspace and npm dependencies are now installed. The initial `npm run typecheck` step failed.
+
+            Diagnose the actual current TypeScript errors by running `npm run typecheck` yourself. Fix the errors without backing out the live-agent repair, weakening types, changing tsconfig strictness, deleting tests, or using broad `any`/`unknown` escape hatches merely to silence the compiler.
+
+            Known previous failure to check first: tests/run-state.test.ts constructed incomplete objects and cast them directly to Run/State. If present, replace those with complete typed fixtures or fixture helpers that satisfy every required field in lib/types.ts.
+
+            Preserve all intended repair behavior:
+            - incremental safe run progress for GPT, Claude and Vercel while status is running;
+            - secret redaction and minimal deployment-status summaries;
+            - best-effort progress writes that never alter settlement;
+            - latest-run task details;
+            - about 1.5-second selected-task polling;
+            - single-flight refreshes;
+            - working Stop task;
+            - Apply using current proposals/base_version only;
+            - existing billing, auth, plan and six-turn semantics.
+
+            After fixing the errors, run `npm run typecheck` and focused relevant tests. Leave the workspace in a state that will pass the workflow's final validation steps.
+
+      - name: Final typecheck
         run: npm run typecheck
 
       - name: Test
@@ -78,6 +114,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Check patch formatting
+        run: git diff --check
 
       - name: Commit validated repair
         env:
